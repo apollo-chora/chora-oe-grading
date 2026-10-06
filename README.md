@@ -1,96 +1,122 @@
 # chora-oe-grading
 
-The OE-grading crew for Chora: the two-agent open-ended-answer quality loop
-that backs the orchestrator's per-OE-answer grading path (ADR-172 §D2/§D4/§D5).
-The **oe_evaluator** grades ONE OE answer against its weighted rubric +
-model_answer (per-criterion sub-scores + an always-present per-question
-comment) and also runs `assess_summary` mode (the holistic whole-assessment
-narrative over all answers); the **oe_moderator** is the judge that reviews the
-evaluator's grading and decides accept | reject+feedback for rubric fidelity,
-hallucination, and internal consistency. The Python orchestrator owns the
-≤2-iteration loop; the human instructor is the authoritative override
-downstream.
+## About
 
-Module path: `github.com/apollo-chora/chora-oe-grading`.
+`chora-oe-grading` is a Go service that provides the two agents used by Chora's open-ended (OE) answer grading flow. `oe_evaluator` grades one answer against a weighted rubric and model answer, and can also produce a whole-assessment summary; `oe_moderator` reviews an evaluator result for rubric fidelity, hallucination, and consistency and returns an accept or reject decision with feedback. Both agents receive work through NATS JetStream and send model requests through `chora-model-gateway`.
 
-The crew is cloud-neutral: NATS JetStream for dispatch (via
-`chora-adk-common/agentdispatch` + `chora-common/eventbus`), standard OTLP for
-traces (via `chora-adk-common/tracing` + `chora-common/otel`), env-backed
-secrets, and all model calls routed through `chora-model-gateway`. No cloud
-account or managed service is required.
+## Quick start
 
-## Binaries
+Prerequisites: Go 1.26.6, a reachable NATS JetStream server, and a reachable Chora model gateway. The subscriber will not start unless dispatch is enabled and both `CHORA_GATEWAY_TENANT_ID` and `CHORA_GATEWAY_GCID` are set.
 
-| Binary | Dispatch role | Service name | Purpose |
-|---|---|---|---|
-| `cmd/oe_evaluator` | `oe_evaluate` | `chora-oe-evaluator` | Grader of record (evaluate + assess_summary modes) |
-| `cmd/oe_moderator` | `oe_moderate` | `chora-oe-moderator` | Judge: accept/reject the evaluator's grading |
-
-Both are subscriber-only processes (ADR-254 D6): the binary composes runner +
-plugin chain + `agentdispatch.Serve` directly and consumes its NATS JetStream
-dispatch subscription. The only HTTP surface is the health port
-(`/healthz`, `/readyz`). The binaries take NO arguments — a stale
-`web -port 8080 ... agentengine` command line is refused by name.
-
-## Packages
-
-| Package | Purpose |
-|---|---|
-| `internal/agent/` | The two prompt composers (pure functions), the per-turn mode-branch instruction providers, the rubric→composite scoring context builders, and the moderator accept/reject parser. |
-| `internal/agentconfig/` | Embedded per-agent model + prompt YAML (tier / primary_model / fallback_models / prompt_version) — the single source of truth for model selection. |
-| `internal/boot/` | Resolved boot wiring: env + agentconfig into a `Config`, agent constructors with the LLM injected, the plugin chain [inboundTrace, tenantProp, termination], and the subscriber-only serve glue. |
-
-## Transport
-
-- **Events** — NATS JetStream via `chora-common/eventbus`. The dispatch
-  subjects (`chora.ai_kernel.agent_dispatch.<role>_{requested,completed}.v1`)
-  are valid NATS subjects; the canonical event envelope rides as NATS headers.
-- **Traces** — standard OTLP/gRPC via `chora-common/otel`; stdout in local dev
-  when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
-- **Model calls** — gRPC to `chora-model-gateway`; TLS + `CHORA_GATEWAY_TOKEN`
-  in production, plaintext when `CHORA_GATEWAY_INSECURE` is set for local dev.
-
-## Configuration
-
-| Variable | Purpose | Local default |
-| --- | --- | --- |
-| `NATS_URL` | NATS JetStream event bus (dispatch subscriber) | unset |
-| `AGENT_DISPATCH_ENABLED` | Opt in to the dispatch subscriber (must be `true`) | `false` |
-| `AGENT_DISPATCH_SUBSCRIPTION` | Consumer name override | derived from service + role |
-| `AGENT_DISPATCH_MAX_DELIVERY_ATTEMPTS` | Redelivery ceiling (must match the consumer) | `5` |
-| `AGENT_HEALTH_PORT` | Health/readiness port for the subscriber-only agent | `8080` |
-| `CHORA_GATEWAY_ENDPOINT` | Model gateway gRPC target | `gateway.chora.site:443` |
-| `CHORA_GATEWAY_TENANT_ID` | Tenant scope for RLS + ledger attribution (required) | unset |
-| `CHORA_GATEWAY_GCID` | Actor identity: learner GCID or agent AGID (required) | unset |
-| `CHORA_GATEWAY_TOKEN` | Static bearer token for the model gateway | unset |
-| `CHORA_GATEWAY_INSECURE` | Plaintext gRPC to a local gateway (dev only) | unset |
-| `CHORA_GATEWAY_AUDIENCE` | Audience claim for gateway tokens | `https://gateway.chora.site` |
-| `CHORA_SESSION_APP_NAME` | ADK session app_name (default: the service name) | `chora-oe-evaluator` / `chora-oe-moderator` |
-| `OE_EVALUATOR_MODEL` | Override the evaluator's primary model | YAML-declared |
-| `OE_MODERATOR_MODEL` | Override the moderator's primary model | YAML-declared |
-| `CHORA_ENV` | Environment label (dev / staging / prod) | `dev` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/gRPC trace endpoint | stdout |
-| `CHORA_SERVICE_VERSION` | Stamped as the OTLP `service.version` attribute | `dev` |
-
-The crew needs no database. It needs NATS (dispatch) and reaches
-`chora-model-gateway` for every LLM call.
-
-## Build and test
+Clone the repository, download Go dependencies, and verify the build and tests:
 
 ```sh
+git clone https://github.com/apollo-chora/chora-oe-grading.git
+cd chora-oe-grading
+go mod download
 go build ./...
-go vet ./...
-gofmt -l .   # must be empty
 go test ./...
 ```
 
-The suite is hermetic — no broker, database, or network is required.
+For local environment values, copy the checked-in example and edit it for the services available in your environment:
 
-## Docker
+```sh
+cp .env.example .env
+```
+
+The example uses NATS at `nats://nats:4222` and a plaintext model gateway at `localhost:9090`. It sets `AGENT_DISPATCH_ENABLED=true` and provides local tenant/GCID values. The example also points OTLP tracing at `http://otel-collector:4317`; remove that setting to use stdout tracing.
+
+Build either binary explicitly:
+
+```sh
+go build -o oe_evaluator ./cmd/oe_evaluator
+go build -o oe_moderator ./cmd/oe_moderator
+```
+
+## Usage
+
+The repository builds two subscriber binaries:
+
+| Binary | Dispatch role | Service name | Role |
+| --- | --- | --- | --- |
+| `cmd/oe_evaluator` | `oe_evaluate` | `chora-oe-evaluator` | Grades one OE answer; also supports `assess_summary` mode |
+| `cmd/oe_moderator` | `oe_moderate` | `chora-oe-moderator` | Judges the evaluator output and returns accept or reject+feedback |
+
+Both binaries take no command-line arguments. They subscribe to NATS JetStream dispatch requests and expose only the health endpoints `/healthz` and `/readyz` on `AGENT_HEALTH_PORT`.
+
+The dispatch subjects use the form:
+
+```text
+chora.ai_kernel.agent_dispatch.<role>_requested.v1
+chora.ai_kernel.agent_dispatch.<role>_completed.v1
+```
+
+where the role is `oe_evaluate` or `oe_moderate`. The canonical event envelope is carried in NATS headers.
+
+Model calls go through `chora-model-gateway` over gRPC. Production uses TLS with `CHORA_GATEWAY_TOKEN`; setting `CHORA_GATEWAY_INSECURE` enables plaintext gRPC for local development.
+
+The evaluator reads a per-turn `mode` from session state. The supported values are:
+
+- `evaluate`: grade one OE answer against its weighted rubric and model answer. The LLM returns one score per rubric criterion plus an always-present per-question comment. The composite `points_earned` is calculated downstream, not by the model.
+- `assess_summary`: produce a learner-facing holistic summary across all assessment answers. This path does not use rubric criterion scoring or the moderator loop.
+
+The moderator receives the evaluator's JSON result together with the rubric, learner answer, and model answer. Its output is JSON of the form `{"accepted": true|false, "feedback": "..."}`; it does not re-grade the answer.
+
+The main configuration variables are:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `NATS_URL` | NATS JetStream dispatch endpoint | unset |
+| `AGENT_DISPATCH_ENABLED` | Enables the dispatch subscriber; must be `true` | `false` |
+| `AGENT_DISPATCH_SUBSCRIPTION` | Overrides the generated consumer name | derived from service and role |
+| `AGENT_DISPATCH_MAX_DELIVERY_ATTEMPTS` | Maximum redelivery attempts | `5` |
+| `AGENT_HEALTH_PORT` | Health/readiness HTTP port | `8080` |
+| `CHORA_GATEWAY_ENDPOINT` | Model gateway gRPC target | `gateway.chora.site:443` |
+| `CHORA_GATEWAY_TENANT_ID` | Tenant used for gateway attribution | required |
+| `CHORA_GATEWAY_GCID` | Actor identity used for gateway attribution | required |
+| `CHORA_GATEWAY_TOKEN` | Static bearer token for the gateway | unset |
+| `CHORA_GATEWAY_INSECURE` | Uses plaintext gRPC for local gateway access | unset |
+| `CHORA_GATEWAY_AUDIENCE` | Gateway token audience | `https://gateway.chora.site` |
+| `CHORA_SESSION_APP_NAME` | ADK session app name | service name |
+| `OE_EVALUATOR_MODEL` | Evaluator primary-model override | YAML value |
+| `OE_MODERATOR_MODEL` | Moderator primary-model override | YAML value |
+| `CHORA_ENV` | Environment label | `dev` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/gRPC trace endpoint | stdout |
+| `CHORA_SERVICE_VERSION` | OTLP `service.version` value | `dev` |
+
+The embedded agent configuration currently selects `gemini-3.1-pro-preview` with `gemini-2.5-pro` as fallback for the evaluator, and `gemini-3.5-flash` with `gemini-2.5-flash` as fallback for the moderator.
+
+Docker builds both binaries into one image and defaults to the evaluator:
 
 ```sh
 docker build -t chora-oe-grading .
+docker run --rm chora-oe-grading
 ```
 
-The image carries both binaries; the entrypoint defaults to `oe_evaluator`.
-Override the command to select the moderator: `["/app/oe_moderator"]`.
+To use the moderator binary from the same image, override the command with `/app/oe_moderator`.
+
+## Development
+
+The project is a Go 1.26.6 module:
+
+```text
+cmd/oe_evaluator/       evaluator executable
+cmd/oe_moderator/       moderator executable
+internal/agent/         prompt composition, session-state context builders, scoring helpers, and moderation parsing
+internal/agent/prompts/ embedded v1 prompt fragments
+internal/agentconfig/   embedded per-agent model and prompt YAML
+internal/boot/          configuration, agent construction, plugins, dispatch wiring, and runtime startup
+```
+
+The normal local checks are the same checks used by CI:
+
+```sh
+gofmt -l .
+go mod tidy
+go vet ./...
+go test ./...
+```
+
+CI also verifies that `go mod tidy` leaves `go.mod` and `go.sum` unchanged.
+
+The unit-test suite covers prompt composition, state handling, configuration, dispatch identity, gateway wiring, plugin configuration, and the subscriber-only startup contract. The tests are designed to run without a broker, database, or network dependency.
