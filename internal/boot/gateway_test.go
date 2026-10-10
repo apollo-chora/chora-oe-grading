@@ -8,8 +8,8 @@ import "testing"
 func TestGatewayConfig_stampsTheCrewSurfaceAndAgentID(t *testing.T) {
 	for _, crew := range []string{CrewKindEvaluator, CrewKindModerator} {
 		cfg := Config{
-			CrewKind: crew, GatewayEndpoint: "gateway.chora.site:443", Model: "gemini-3.1-pro-preview",
-			FallbackModels: []string{"gemini-2.5-pro"}, GatewayTenantID: "t", GatewayGCID: "g",
+			CrewKind: crew, GatewayEndpoint: "gateway.chora.site:443", Model: "longcat-2.5-preview",
+			FallbackModels: []string{"longcat-2.5-preview"}, GatewayTenantID: "t", GatewayGCID: "g",
 		}
 		gw := gatewayConfig(cfg)
 		if gw.Surface != CrewSurface {

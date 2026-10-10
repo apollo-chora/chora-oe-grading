@@ -2,7 +2,7 @@ package agentconfig_test
 
 // Tests for the embedded per-agent model + prompt config (ADR-172 §D2/§D3).
 //
-// The YAML is the single source of truth for the AGENT-DRIVEN tier ladder: the
+// The YAML is the single source of truth for the agent-declared model route: the
 // agent sends primary_model as the gateway logical_model_id and fallback_models
 // as InvokeRequest.fallback_logical_model_ids, and the gateway HONOURS the
 // declared chain rather than applying a per-tier ladder of its own. A silent
@@ -18,8 +18,8 @@ import (
 )
 
 // The evaluator is the grader of record: a learner's grade rides on its output
-// (and on the assess_summary narrative), so it runs the HIGH text tier.
-func TestOEEvaluator_HighTierLadder(t *testing.T) {
+// (and on the assess_summary narrative). It runs the single text route.
+func TestOEEvaluator_DeclaresTheLongcatRoute(t *testing.T) {
 	cfg, err := agentconfig.OEEvaluator()
 	if err != nil {
 		t.Fatalf("OEEvaluator: %v", err)
@@ -38,8 +38,8 @@ func TestOEEvaluator_HighTierLadder(t *testing.T) {
 	}
 	want := agentconfig.SubAgentConfig{
 		Tier:           "high",
-		PrimaryModel:   "gemini-3.1-pro-preview",
-		FallbackModels: []string{"gemini-2.5-pro"},
+		PrimaryModel:   "longcat-2.5-preview",
+		FallbackModels: []string{"longcat-2.5-preview"},
 		PromptVersion:  "v1",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -47,9 +47,9 @@ func TestOEEvaluator_HighTierLadder(t *testing.T) {
 	}
 }
 
-// The moderator is a tool-free accept/reject judge over one structured input,
-// so it runs the CHEAP text tier (mirrors qgen_critic).
-func TestOEModerator_CheapTierLadder(t *testing.T) {
+// The moderator is a tool-free accept/reject judge over one structured input.
+// It runs the same single text route as the evaluator.
+func TestOEModerator_DeclaresTheLongcatRoute(t *testing.T) {
 	cfg, err := agentconfig.OEModerator()
 	if err != nil {
 		t.Fatalf("OEModerator: %v", err)
@@ -68,8 +68,8 @@ func TestOEModerator_CheapTierLadder(t *testing.T) {
 	}
 	want := agentconfig.SubAgentConfig{
 		Tier:           "cheap",
-		PrimaryModel:   "gemini-3.5-flash",
-		FallbackModels: []string{"gemini-2.5-flash"},
+		PrimaryModel:   "longcat-2.5-preview",
+		FallbackModels: []string{"longcat-2.5-preview"},
 		PromptVersion:  "v1",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -77,10 +77,11 @@ func TestOEModerator_CheapTierLadder(t *testing.T) {
 	}
 }
 
-// The two agents declare DIFFERENT tiers on purpose (ADR-172 §D2): the grader
-// of record is expensive, the judge is cheap. A config edit that collapses them
-// onto one model erases that decision, so assert the split explicitly.
-func TestOEAgents_EvaluatorAndModeratorRunDifferentPrimaries(t *testing.T) {
+// Single-provider deployment: both agents route every text call to the one
+// LongCat-2.5-Preview logical model, primary and fallback alike. A config edit
+// that re-introduces a second provider would silently re-route real grading
+// traffic, so assert the collapse explicitly.
+func TestOEAgents_ShareTheSingleLongcatRoute(t *testing.T) {
 	ev, err := agentconfig.OEEvaluator()
 	if err != nil {
 		t.Fatalf("OEEvaluator: %v", err)
@@ -97,13 +98,21 @@ func TestOEAgents_EvaluatorAndModeratorRunDifferentPrimaries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sub(moderator): %v", err)
 	}
-	if evSub.Tier == modSub.Tier {
-		t.Errorf("evaluator and moderator share tier %q; ADR-172 §D2 puts the grader on high and the judge on cheap",
-			evSub.Tier)
+	if evSub.PrimaryModel != modSub.PrimaryModel {
+		t.Errorf("evaluator runs %q but moderator runs %q; both must route to the one text model",
+			evSub.PrimaryModel, modSub.PrimaryModel)
 	}
-	if evSub.PrimaryModel == modSub.PrimaryModel {
-		t.Errorf("evaluator and moderator share primary_model %q; the tier split must reach the model id",
-			evSub.PrimaryModel)
+	if evSub.PrimaryModel != "longcat-2.5-preview" {
+		t.Errorf("primary_model = %q, want %q", evSub.PrimaryModel, "longcat-2.5-preview")
+	}
+	for _, sub := range []struct {
+		agent string
+		cfg   agentconfig.SubAgentConfig
+	}{{"oe_evaluator", evSub}, {"oe_moderator", modSub}} {
+		if len(sub.cfg.FallbackModels) != 1 || sub.cfg.FallbackModels[0] != sub.cfg.PrimaryModel {
+			t.Errorf("%s fallback chain = %v; the single-provider deployment declares the same model as primary and only fallback",
+				sub.agent, sub.cfg.FallbackModels)
+		}
 	}
 }
 

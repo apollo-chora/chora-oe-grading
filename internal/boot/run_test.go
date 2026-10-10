@@ -46,13 +46,13 @@ func TestNewGatewayLLM_refusesAnIncompleteConfig(t *testing.T) {
 	_, err := NewGatewayLLM(context.Background(), Config{
 		CrewKind:        CrewKindEvaluator,
 		GatewayEndpoint: "gateway.chora.site:443",
-		Model:           "gemini-3.1-pro-preview",
+		Model:           "longcat-2.5-preview",
 		// GatewayTenantID + GatewayGCID deliberately absent.
 	})
 	if err == nil {
 		t.Fatalf("NewGatewayLLM built a client with no tenant and no GCID")
 	}
-	for _, want := range []string{"modelgatewayclient.New", CrewKindEvaluator, "gemini-3.1-pro-preview", "gateway.chora.site:443"} {
+	for _, want := range []string{"modelgatewayclient.New", CrewKindEvaluator, "longcat-2.5-preview", "gateway.chora.site:443"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err, want)
 		}

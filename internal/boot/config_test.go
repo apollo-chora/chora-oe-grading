@@ -167,11 +167,11 @@ func TestLoadEvaluatorConfig_defaults(t *testing.T) {
 	assertEqual(t, "ChoraEnv", cfg.ChoraEnv, "dev")
 
 	// The embedded oe_evaluator.yaml is the single source of truth for the
-	// HIGH text tier. A learner's grade rides on this model, so the primary
-	// and its declared fallback chain are pinned here.
-	assertEqual(t, "Model", cfg.Model, "gemini-3.1-pro-preview")
+	// evaluator's model route. A learner's grade rides on this model, so the
+	// primary and its declared fallback chain are pinned here.
+	assertEqual(t, "Model", cfg.Model, "longcat-2.5-preview")
 	assertEqual(t, "PromptVersion", cfg.PromptVersion, "v1")
-	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"gemini-2.5-pro"})
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"longcat-2.5-preview"})
 }
 
 func TestLoadModeratorConfig_defaults(t *testing.T) {
@@ -187,10 +187,10 @@ func TestLoadModeratorConfig_defaults(t *testing.T) {
 	assertEqual(t, "GatewayEndpoint", cfg.GatewayEndpoint, "gateway.chora.site:443")
 	assertEqual(t, "ChoraEnv", cfg.ChoraEnv, "dev")
 
-	// The moderator is the CHEAP text tier: a fast accept/reject judge.
-	assertEqual(t, "Model", cfg.Model, "gemini-3.5-flash")
+	// The moderator is a fast accept/reject judge on the same single text route.
+	assertEqual(t, "Model", cfg.Model, "longcat-2.5-preview")
 	assertEqual(t, "PromptVersion", cfg.PromptVersion, "v1")
-	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"gemini-2.5-flash"})
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"longcat-2.5-preview"})
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ func TestLoadEvaluatorConfig_everyOverride(t *testing.T) {
 	minimalBootEnv(t)
 	t.Setenv("CHORA_SESSION_APP_NAME", "oe-eval-experiment")
 	t.Setenv("CHORA_GATEWAY_ENDPOINT", "gateway.internal:9090")
-	t.Setenv("OE_EVALUATOR_MODEL", "gemini-experiment")
+	t.Setenv("OE_EVALUATOR_MODEL", "longcat-experiment")
 	t.Setenv("CHORA_ENV", "prod")
 
 	cfg, err := LoadEvaluatorConfig()
@@ -211,41 +211,41 @@ func TestLoadEvaluatorConfig_everyOverride(t *testing.T) {
 
 	assertEqual(t, "SessionAppName", cfg.SessionAppName, "oe-eval-experiment")
 	assertEqual(t, "GatewayEndpoint", cfg.GatewayEndpoint, "gateway.internal:9090")
-	assertEqual(t, "Model", cfg.Model, "gemini-experiment")
+	assertEqual(t, "Model", cfg.Model, "longcat-experiment")
 	assertEqual(t, "ChoraEnv", cfg.ChoraEnv, "prod")
 
-	// The env override replaces the primary only. Tier, fallback chain and
-	// prompt version stay YAML-declared.
-	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"gemini-2.5-pro"})
+	// The env override replaces the primary only. Fallback chain and prompt
+	// version stay YAML-declared.
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"longcat-2.5-preview"})
 	assertEqual(t, "PromptVersion", cfg.PromptVersion, "v1")
 }
 
 func TestLoadModeratorConfig_modelOverride(t *testing.T) {
 	minimalBootEnv(t)
-	t.Setenv("OE_MODERATOR_MODEL", "gemini-experiment-flash")
+	t.Setenv("OE_MODERATOR_MODEL", "longcat-experiment")
 
 	cfg, err := LoadModeratorConfig()
 	if err != nil {
 		t.Fatalf("LoadModeratorConfig: %v", err)
 	}
-	assertEqual(t, "Model", cfg.Model, "gemini-experiment-flash")
-	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"gemini-2.5-flash"})
+	assertEqual(t, "Model", cfg.Model, "longcat-experiment")
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"longcat-2.5-preview"})
 }
 
 func TestLoadConfig_evaluatorOverrideDoesNotLeakIntoModerator(t *testing.T) {
 	// Both binaries ship in one image and read the same environment. An
 	// evaluator override must not select the moderator's model.
 	minimalBootEnv(t)
-	t.Setenv("OE_EVALUATOR_MODEL", "gemini-experiment")
+	t.Setenv("OE_EVALUATOR_MODEL", "longcat-experiment")
 
 	cfg, err := LoadModeratorConfig()
 	if err != nil {
 		t.Fatalf("LoadModeratorConfig: %v", err)
 	}
-	if cfg.Model == "gemini-experiment" {
+	if cfg.Model == "longcat-experiment" {
 		t.Errorf("moderator picked up OE_EVALUATOR_MODEL: the two binaries share an env")
 	}
-	assertEqual(t, "Model", cfg.Model, "gemini-3.5-flash")
+	assertEqual(t, "Model", cfg.Model, "longcat-2.5-preview")
 }
 
 // ---------------------------------------------------------------------------
@@ -266,8 +266,8 @@ func TestLogAttrs_evaluatorKeysAndOrder(t *testing.T) {
 	cfg := Config{
 		CrewKind:        CrewKindEvaluator,
 		SessionAppName:  "chora-oe-evaluator",
-		Model:           "gemini-3.1-pro-preview",
-		FallbackModels:  []string{"gemini-2.5-pro"},
+		Model:           "longcat-2.5-preview",
+		FallbackModels:  []string{"longcat-2.5-preview"},
 		GatewayEndpoint: "gateway.chora.site:443",
 		GatewayTenantID: "tenant-oe",
 		GatewayGCID:     "0192f4c1-aaaa-bbbb-cccc-ddddeeeeffff",
@@ -296,7 +296,7 @@ func TestLogAttrs_evaluatorKeysAndOrder(t *testing.T) {
 }
 
 func TestLogAttrs_moderatorUsesItsOwnModelKeys(t *testing.T) {
-	attrs := Config{CrewKind: CrewKindModerator, Model: "gemini-3.5-flash"}.LogAttrs()
+	attrs := Config{CrewKind: CrewKindModerator, Model: "longcat-2.5-preview"}.LogAttrs()
 	m := attrsToMap(t, attrs)
 	if _, ok := m["moderator_model"]; !ok {
 		t.Errorf("moderator boot line has no moderator_model key: %v", m)
