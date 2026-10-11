@@ -8,11 +8,15 @@
 # primary_model as the gateway logical_model_id + fallback_models as the
 # agent-declared fallback chain; the gateway HONOURS it.
 #
-#   CHEAP = moderator → gemini-3.5-flash → gemini-2.5-flash
+#   CHEAP = moderator → longcat-2.5-preview
+# Both tiers name the deployment's single text route (LongCat @ api.longcat.ai).
+# The fallback repeats the primary deliberately: there is one provider to
+# degrade to, and the gateway de-duplicates an identical (vendor, model) pair.
+# The tier label — not the model id — is what carries the ADR-172 §D2 split.
 agent: oe_moderator
 sub_agents:
   moderator:
     tier: cheap
-    primary_model: gemini-3.5-flash
-    fallback_models: [gemini-2.5-flash]
+    primary_model: longcat-2.5-preview
+    fallback_models: [longcat-2.5-preview]
     prompt_version: v1

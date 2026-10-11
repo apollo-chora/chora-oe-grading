@@ -27,7 +27,7 @@ func TestParse_MalformedYAMLFailsLoud(t *testing.T) {
 func TestParse_MissingAgentNameFailsLoud(t *testing.T) {
 	// Well-formed YAML, but no top-level `agent` key: the agent name is what
 	// every downstream error message and O+ prompt stamp is keyed on.
-	cfg, err := parse([]byte("sub_agents:\n  evaluator:\n    tier: high\n    primary_model: gemini-3.1-pro-preview\n    prompt_version: v1\n"))
+	cfg, err := parse([]byte("sub_agents:\n  evaluator:\n    tier: high\n    primary_model: longcat-2.5-preview\n    prompt_version: v1\n"))
 	if err == nil {
 		t.Fatalf("YAML without a top-level agent name must fail loud; got config %+v", cfg)
 	}
@@ -71,7 +71,7 @@ func TestSub_EmptyPrimaryModelFailsLoud(t *testing.T) {
 	c := AgentConfig{
 		Agent: "oe_evaluator",
 		SubAgents: map[string]SubAgentConfig{
-			"evaluator": {Tier: "high", FallbackModels: []string{"gemini-2.5-pro"}, PromptVersion: "v1"},
+			"evaluator": {Tier: "high", FallbackModels: []string{"longcat-2.5-preview"}, PromptVersion: "v1"},
 		},
 	}
 	sc, err := c.Sub("evaluator")
@@ -92,7 +92,7 @@ func TestSub_EmptyPromptVersionFailsLoud(t *testing.T) {
 	c := AgentConfig{
 		Agent: "oe_moderator",
 		SubAgents: map[string]SubAgentConfig{
-			"moderator": {Tier: "cheap", PrimaryModel: "gemini-3.5-flash"},
+			"moderator": {Tier: "cheap", PrimaryModel: "longcat-2.5-preview"},
 		},
 	}
 	sc, err := c.Sub("moderator")

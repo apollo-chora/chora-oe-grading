@@ -84,7 +84,7 @@ The main configuration variables are:
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/gRPC trace endpoint | stdout |
 | `CHORA_SERVICE_VERSION` | OTLP `service.version` value | `dev` |
 
-The embedded agent configuration currently selects `gemini-3.1-pro-preview` with `gemini-2.5-pro` as fallback for the evaluator, and `gemini-3.5-flash` with `gemini-2.5-flash` as fallback for the moderator.
+The embedded agent configuration names `longcat-2.5-preview` (the deployment's text model, LongCat @ api.longcat.ai) for both the evaluator (HIGH tier) and the moderator (CHEAP tier) — the deployment serves one text route, so the ADR-172 §D2 tier split is carried by the tier label rather than by the model id.
 
 Docker builds both binaries into one image and defaults to the evaluator:
 

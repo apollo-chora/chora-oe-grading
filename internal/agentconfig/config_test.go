@@ -38,8 +38,8 @@ func TestOEEvaluator_HighTierLadder(t *testing.T) {
 	}
 	want := agentconfig.SubAgentConfig{
 		Tier:           "high",
-		PrimaryModel:   "gemini-3.1-pro-preview",
-		FallbackModels: []string{"gemini-2.5-pro"},
+		PrimaryModel:   "longcat-2.5-preview",
+		FallbackModels: []string{"longcat-2.5-preview"},
 		PromptVersion:  "v1",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -66,10 +66,12 @@ func TestOEModerator_CheapTierLadder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sub(moderator): %v", err)
 	}
+	// Both tiers name the deployment's single text route; the tier label — not
+	// the model id — is what carries the ADR-172 §D2 split.
 	want := agentconfig.SubAgentConfig{
 		Tier:           "cheap",
-		PrimaryModel:   "gemini-3.5-flash",
-		FallbackModels: []string{"gemini-2.5-flash"},
+		PrimaryModel:   "longcat-2.5-preview",
+		FallbackModels: []string{"longcat-2.5-preview"},
 		PromptVersion:  "v1",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -78,9 +80,10 @@ func TestOEModerator_CheapTierLadder(t *testing.T) {
 }
 
 // The two agents declare DIFFERENT tiers on purpose (ADR-172 §D2): the grader
-// of record is expensive, the judge is cheap. A config edit that collapses them
-// onto one model erases that decision, so assert the split explicitly.
-func TestOEAgents_EvaluatorAndModeratorRunDifferentPrimaries(t *testing.T) {
+// of record is expensive, the judge is cheap. The deployment serves one text
+// route, so both tiers name it and the TIER LABEL is what carries the split —
+// the model assertion below is that neither declares a stale id.
+func TestOEAgents_TiersSplitAndBothNameTheDeploymentRoute(t *testing.T) {
 	ev, err := agentconfig.OEEvaluator()
 	if err != nil {
 		t.Fatalf("OEEvaluator: %v", err)
@@ -101,9 +104,15 @@ func TestOEAgents_EvaluatorAndModeratorRunDifferentPrimaries(t *testing.T) {
 		t.Errorf("evaluator and moderator share tier %q; ADR-172 §D2 puts the grader on high and the judge on cheap",
 			evSub.Tier)
 	}
-	if evSub.PrimaryModel == modSub.PrimaryModel {
-		t.Errorf("evaluator and moderator share primary_model %q; the tier split must reach the model id",
-			evSub.PrimaryModel)
+	const textRoute = "longcat-2.5-preview"
+	for _, tc := range []struct {
+		name string
+		sc   agentconfig.SubAgentConfig
+	}{{"evaluator", evSub}, {"moderator", modSub}} {
+		if tc.sc.PrimaryModel != textRoute {
+			t.Errorf("%s primary_model = %q, want the deployment's text route %q",
+				tc.name, tc.sc.PrimaryModel, textRoute)
+		}
 	}
 }
 
