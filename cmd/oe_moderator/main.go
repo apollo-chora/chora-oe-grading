@@ -34,7 +34,8 @@
 //
 // Env vars (NEVER inlined per feedback_no_inline_config):
 //
-//	OE_MODERATOR_MODEL                  — override (default agentconfig YAML primary)
+//	OE_MODERATOR_MODEL                  — required: the gateway logical_model_id (env-only, no default)
+//	OE_MODERATOR_FALLBACK_MODELS        — optional comma-separated fallback chain (empty = none)
 //	CHORA_SESSION_APP_NAME              — ADK session app_name (default: the service name)
 //	CHORA_GATEWAY_ENDPOINT              — default gateway.chora.site:443
 //	CHORA_GATEWAY_TENANT_ID / _GCID     — required (ADR-163 Phase 3.1; no stub fallback)
