@@ -8,8 +8,8 @@ import "testing"
 func TestGatewayConfig_stampsTheCrewSurfaceAndAgentID(t *testing.T) {
 	for _, crew := range []string{CrewKindEvaluator, CrewKindModerator} {
 		cfg := Config{
-			CrewKind: crew, GatewayEndpoint: "gateway.chora.site:443", Model: "longcat-2.5-preview",
-			FallbackModels: []string{"longcat-2.5-preview"}, GatewayTenantID: "t", GatewayGCID: "g",
+			CrewKind: crew, GatewayEndpoint: "gateway.chora.site:443", Model: "test-evaluator-model",
+			GatewayTenantID: "t", GatewayGCID: "g",
 		}
 		gw := gatewayConfig(cfg)
 		if gw.Surface != CrewSurface {
@@ -21,7 +21,7 @@ func TestGatewayConfig_stampsTheCrewSurfaceAndAgentID(t *testing.T) {
 		if gw.AgentID != crew || gw.CrewKind != crew {
 			t.Errorf("%s: AgentID/CrewKind = %q/%q, want the crew kind", crew, gw.AgentID, gw.CrewKind)
 		}
-		if gw.Endpoint != cfg.GatewayEndpoint || gw.LogicalModelID != cfg.Model || len(gw.FallbackModelIDs) != 1 ||
+		if gw.Endpoint != cfg.GatewayEndpoint || gw.LogicalModelID != cfg.Model ||
 			gw.TenantID != "t" || gw.GCID != "g" {
 			t.Errorf("%s: gateway config not carried through: %+v", crew, gw)
 		}

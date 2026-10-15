@@ -21,7 +21,9 @@ func clearBootEnv(t *testing.T) {
 		"CHORA_GATEWAY_GCID",
 		"CHORA_GATEWAY_AUDIENCE",
 		"OE_EVALUATOR_MODEL",
+		"OE_EVALUATOR_FALLBACK_MODELS",
 		"OE_MODERATOR_MODEL",
+		"OE_MODERATOR_FALLBACK_MODELS",
 		"CHORA_ENV",
 	} {
 		t.Setenv(k, "")
@@ -29,12 +31,16 @@ func clearBootEnv(t *testing.T) {
 }
 
 // minimalBootEnv sets only what the fail-loud guards demand, so a test that is
-// about defaults does not accidentally assert an override.
+// about defaults does not accidentally assert an override. The model ids are
+// env-only and REQUIRED, so both binaries' model vars are set here; the
+// fallback chains stay unset (the default declares no fallback).
 func minimalBootEnv(t *testing.T) {
 	t.Helper()
 	clearBootEnv(t)
 	t.Setenv("CHORA_GATEWAY_TENANT_ID", "tenant-oe")
 	t.Setenv("CHORA_GATEWAY_GCID", "0192f4c1-aaaa-bbbb-cccc-ddddeeeeffff")
+	t.Setenv("OE_EVALUATOR_MODEL", "test-evaluator-model")
+	t.Setenv("OE_MODERATOR_MODEL", "test-moderator-model")
 }
 
 // ---------------------------------------------------------------------------
@@ -167,11 +173,12 @@ func TestLoadEvaluatorConfig_defaults(t *testing.T) {
 	assertEqual(t, "ChoraEnv", cfg.ChoraEnv, "dev")
 
 	// The embedded oe_evaluator.yaml is the single source of truth for the
-	// HIGH text tier. A learner's grade rides on this model, so the primary
-	// and its declared fallback chain are pinned here.
-	assertEqual(t, "Model", cfg.Model, "longcat-2.5-preview")
+	// HIGH text tier and the prompt version. The model id is env-only: the
+	// REQUIRED OE_EVALUATOR_MODEL flows through verbatim, and the fallback
+	// chain is empty unless OE_EVALUATOR_FALLBACK_MODELS is set.
+	assertEqual(t, "Model", cfg.Model, "test-evaluator-model")
 	assertEqual(t, "PromptVersion", cfg.PromptVersion, "v1")
-	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"longcat-2.5-preview"})
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, nil)
 }
 
 func TestLoadModeratorConfig_defaults(t *testing.T) {
@@ -188,9 +195,60 @@ func TestLoadModeratorConfig_defaults(t *testing.T) {
 	assertEqual(t, "ChoraEnv", cfg.ChoraEnv, "dev")
 
 	// The moderator is the CHEAP text tier: a fast accept/reject judge.
-	assertEqual(t, "Model", cfg.Model, "longcat-2.5-preview")
+	assertEqual(t, "Model", cfg.Model, "test-moderator-model")
 	assertEqual(t, "PromptVersion", cfg.PromptVersion, "v1")
-	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"longcat-2.5-preview"})
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, nil)
+}
+
+// ---------------------------------------------------------------------------
+// Model env guards. A blank *_MODEL var is a deployment defect that must stop
+// the process, never a value the agent invents for itself.
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_missingModelFailsLoud(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		load    func() (Config, error)
+		crewKnd string
+		modelEnv string
+	}{
+		{"evaluator", LoadEvaluatorConfig, CrewKindEvaluator, "OE_EVALUATOR_MODEL"},
+		{"moderator", LoadModeratorConfig, CrewKindModerator, "OE_MODERATOR_MODEL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			minimalBootEnv(t)
+			t.Setenv(tc.modelEnv, "")
+
+			_, err := tc.load()
+			if err == nil {
+				t.Fatalf("load succeeded without %s: the model id is env-only, there is no default", tc.modelEnv)
+			}
+			if !strings.Contains(err.Error(), tc.modelEnv) {
+				t.Errorf("error %q must name the missing env var %s", err, tc.modelEnv)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_fallbackChainIsOptionalAndCommaSeparated(t *testing.T) {
+	// Unset (the default) declares no fallback: the gateway is asked for the
+	// primary target only.
+	minimalBootEnv(t)
+	cfg, err := LoadEvaluatorConfig()
+	if err != nil {
+		t.Fatalf("LoadEvaluatorConfig: %v", err)
+	}
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, nil)
+
+	// A comma-separated list becomes the declared chain, forwarded to the
+	// gateway as fallback_logical_model_ids; blank entries are dropped.
+	t.Setenv("OE_EVALUATOR_FALLBACK_MODELS", "stub-fb-1, stub-fb-2 ,")
+	cfg, err = LoadEvaluatorConfig()
+	if err != nil {
+		t.Fatalf("LoadEvaluatorConfig: %v", err)
+	}
+	assertEqual(t, "Model", cfg.Model, "test-evaluator-model")
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"stub-fb-1", "stub-fb-2"})
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +259,8 @@ func TestLoadEvaluatorConfig_everyOverride(t *testing.T) {
 	minimalBootEnv(t)
 	t.Setenv("CHORA_SESSION_APP_NAME", "oe-eval-experiment")
 	t.Setenv("CHORA_GATEWAY_ENDPOINT", "gateway.internal:9090")
-	t.Setenv("OE_EVALUATOR_MODEL", "longcat-experiment")
+	t.Setenv("OE_EVALUATOR_MODEL", "env-experiment-model")
+	t.Setenv("OE_EVALUATOR_FALLBACK_MODELS", "stub-fb-1,stub-fb-2")
 	t.Setenv("CHORA_ENV", "prod")
 
 	cfg, err := LoadEvaluatorConfig()
@@ -211,41 +270,41 @@ func TestLoadEvaluatorConfig_everyOverride(t *testing.T) {
 
 	assertEqual(t, "SessionAppName", cfg.SessionAppName, "oe-eval-experiment")
 	assertEqual(t, "GatewayEndpoint", cfg.GatewayEndpoint, "gateway.internal:9090")
-	assertEqual(t, "Model", cfg.Model, "longcat-experiment")
+	assertEqual(t, "Model", cfg.Model, "env-experiment-model")
 	assertEqual(t, "ChoraEnv", cfg.ChoraEnv, "prod")
 
-	// The env override replaces the primary only. Tier, fallback chain and
-	// prompt version stay YAML-declared.
-	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"longcat-2.5-preview"})
+	// The env override replaces the primary only; tier and prompt version stay
+	// YAML-declared, and the fallback chain comes from its own env var.
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"stub-fb-1", "stub-fb-2"})
 	assertEqual(t, "PromptVersion", cfg.PromptVersion, "v1")
 }
 
 func TestLoadModeratorConfig_modelOverride(t *testing.T) {
 	minimalBootEnv(t)
-	t.Setenv("OE_MODERATOR_MODEL", "longcat-experiment-flash")
+	t.Setenv("OE_MODERATOR_MODEL", "env-moderator-model")
 
 	cfg, err := LoadModeratorConfig()
 	if err != nil {
 		t.Fatalf("LoadModeratorConfig: %v", err)
 	}
-	assertEqual(t, "Model", cfg.Model, "longcat-experiment-flash")
-	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, []string{"longcat-2.5-preview"})
+	assertEqual(t, "Model", cfg.Model, "env-moderator-model")
+	assertStringSlice(t, "FallbackModels", cfg.FallbackModels, nil)
 }
 
 func TestLoadConfig_evaluatorOverrideDoesNotLeakIntoModerator(t *testing.T) {
 	// Both binaries ship in one image and read the same environment. An
 	// evaluator override must not select the moderator's model.
 	minimalBootEnv(t)
-	t.Setenv("OE_EVALUATOR_MODEL", "longcat-experiment")
+	t.Setenv("OE_EVALUATOR_MODEL", "env-experiment-model")
 
 	cfg, err := LoadModeratorConfig()
 	if err != nil {
 		t.Fatalf("LoadModeratorConfig: %v", err)
 	}
-	if cfg.Model == "longcat-experiment" {
+	if cfg.Model == "env-experiment-model" {
 		t.Errorf("moderator picked up OE_EVALUATOR_MODEL: the two binaries share an env")
 	}
-	assertEqual(t, "Model", cfg.Model, "longcat-2.5-preview")
+	assertEqual(t, "Model", cfg.Model, "test-moderator-model")
 }
 
 // ---------------------------------------------------------------------------
@@ -266,8 +325,7 @@ func TestLogAttrs_evaluatorKeysAndOrder(t *testing.T) {
 	cfg := Config{
 		CrewKind:        CrewKindEvaluator,
 		SessionAppName:  "chora-oe-evaluator",
-		Model:           "longcat-2.5-preview",
-		FallbackModels:  []string{"longcat-2.5-preview"},
+		Model:           "test-evaluator-model",
 		GatewayEndpoint: "gateway.chora.site:443",
 		GatewayTenantID: "tenant-oe",
 		GatewayGCID:     "0192f4c1-aaaa-bbbb-cccc-ddddeeeeffff",
@@ -296,7 +354,7 @@ func TestLogAttrs_evaluatorKeysAndOrder(t *testing.T) {
 }
 
 func TestLogAttrs_moderatorUsesItsOwnModelKeys(t *testing.T) {
-	attrs := Config{CrewKind: CrewKindModerator, Model: "longcat-2.5-preview"}.LogAttrs()
+	attrs := Config{CrewKind: CrewKindModerator, Model: "test-moderator-model"}.LogAttrs()
 	m := attrsToMap(t, attrs)
 	if _, ok := m["moderator_model"]; !ok {
 		t.Errorf("moderator boot line has no moderator_model key: %v", m)
@@ -375,7 +433,7 @@ func assertStringSlice(t *testing.T, field string, got, want []string) {
 func TestLoadConfig_agentconfigLoadFailureNamesTheBinary(t *testing.T) {
 	minimalBootEnv(t)
 
-	_, err := loadConfig(CrewKindEvaluator, subAgentEvaluator, envEvaluatorModel,
+	_, err := loadConfig(CrewKindEvaluator, subAgentEvaluator, envEvaluatorModel, envEvaluatorFallback,
 		func() (agentconfig.AgentConfig, error) {
 			return agentconfig.AgentConfig{}, errors.New("embedded YAML is corrupt")
 		})
@@ -392,7 +450,7 @@ func TestLoadConfig_agentconfigLoadFailureNamesTheBinary(t *testing.T) {
 func TestLoadConfig_missingSubAgentNamesTheBinary(t *testing.T) {
 	minimalBootEnv(t)
 
-	_, err := loadConfig(CrewKindModerator, "no_such_sub_agent", envModeratorModel, agentconfig.OEModerator)
+	_, err := loadConfig(CrewKindModerator, "no_such_sub_agent", envModeratorModel, envModeratorFallback, agentconfig.OEModerator)
 	if err == nil {
 		t.Fatalf("loadConfig accepted a sub-agent the YAML does not declare")
 	}

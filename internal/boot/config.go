@@ -28,6 +28,7 @@ package boot
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/apollo-chora/chora-oe-grading/internal/agentconfig"
 )
@@ -49,11 +50,16 @@ const (
 	subAgentModerator = "moderator"
 )
 
-// Model-override env vars. Ops may override an individual primary for a quick
-// experiment; tier, fallback chain and prompt version stay YAML-declared.
+// Model env vars. Both *_MODEL vars are REQUIRED — the model id is env-only,
+// so a deploy that forgets one dies at boot rather than routing to a literal
+// name. The *_FALLBACK_MODELS vars are optional comma-separated chains: unset
+// (the default) declares no fallback. Tier and prompt version stay
+// YAML-declared in the embedded agentconfig.
 const (
-	envEvaluatorModel = "OE_EVALUATOR_MODEL"
-	envModeratorModel = "OE_MODERATOR_MODEL"
+	envEvaluatorModel    = "OE_EVALUATOR_MODEL"
+	envEvaluatorFallback = "OE_EVALUATOR_FALLBACK_MODELS"
+	envModeratorModel    = "OE_MODERATOR_MODEL"
+	envModeratorFallback = "OE_MODERATOR_FALLBACK_MODELS"
 )
 
 // Config is one binary's fully resolved boot configuration. Every field comes
@@ -79,11 +85,12 @@ type Config struct {
 	GatewayTenantID string
 	GatewayGCID     string
 
-	// Model is the gateway logical_model_id: the agentconfig primary unless the
-	// per-binary override env var is set.
+	// Model is the gateway logical_model_id, read from the REQUIRED per-binary
+	// model env var (env-only; boot fails loud when it is unset).
 	Model string
-	// FallbackModels rides on InvokeRequest.fallback_logical_model_ids; the
-	// gateway honours the agent-declared chain rather than a per-tier ladder.
+	// FallbackModels rides on InvokeRequest.fallback_logical_model_ids,
+	// sourced from the optional *_FALLBACK_MODELS comma-separated env var;
+	// the gateway honours the declared chain rather than a per-tier ladder.
 	FallbackModels []string
 	// PromptVersion selects the composer template version and is stamped onto
 	// the active span by promptstamping (ADR-197 M-A).
@@ -100,6 +107,34 @@ func EnvOr(name, fallback string) string {
 	return fallback
 }
 
+// requiredModel returns the env-provided gateway logical_model_id, failing
+// loud when the var is unset. Model ids are env-only: there is no literal
+// default to fall back to.
+func requiredModel(name string) (string, error) {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return "", fmt.Errorf("%s required (the gateway logical_model_id; env-only, no default)", name)
+	}
+	return v, nil
+}
+
+// fallbackModels parses a comma-separated env list into the declared fallback
+// chain. Unset / blank (the default) declares no chain, so the gateway is
+// asked for the primary target only.
+func fallbackModels(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // SafePrefix returns the first n characters of s, padded with "…" if truncated.
 // Used to keep a GCID out of the logs in full.
 func SafePrefix(s string, n int) string {
@@ -110,24 +145,26 @@ func SafePrefix(s string, n int) string {
 }
 
 // LoadEvaluatorConfig resolves the oe_evaluator boot configuration from the
-// process environment plus the embedded oe_evaluator.yaml. Every failure is
+// process environment (the REQUIRED model id and optional fallback chain) plus
+// the embedded oe_evaluator.yaml (tier + prompt version). Every failure is
 // returned as a descriptive error so the caller decides how to die: the guards
 // themselves are unchanged from the inline main() they came from.
 func LoadEvaluatorConfig() (Config, error) {
-	return loadConfig(CrewKindEvaluator, subAgentEvaluator, envEvaluatorModel, agentconfig.OEEvaluator)
+	return loadConfig(CrewKindEvaluator, subAgentEvaluator, envEvaluatorModel, envEvaluatorFallback, agentconfig.OEEvaluator)
 }
 
 // LoadModeratorConfig resolves the oe_moderator boot configuration from the
-// process environment plus the embedded oe_moderator.yaml.
+// process environment (the REQUIRED model id and optional fallback chain) plus
+// the embedded oe_moderator.yaml (tier + prompt version).
 func LoadModeratorConfig() (Config, error) {
-	return loadConfig(CrewKindModerator, subAgentModerator, envModeratorModel, agentconfig.OEModerator)
+	return loadConfig(CrewKindModerator, subAgentModerator, envModeratorModel, envModeratorFallback, agentconfig.OEModerator)
 }
 
 // loadConfig is the shared resolution order, kept identical for both binaries:
 // agentconfig load, sub-agent lookup, gateway credential guard, then the
 // defaulted values. The order matters for the error a broken deployment sees
 // first, so it mirrors the original main() line for line.
-func loadConfig(crewKind, subAgent, modelEnv string, load func() (agentconfig.AgentConfig, error)) (Config, error) {
+func loadConfig(crewKind, subAgent, modelEnv, fallbackEnv string, load func() (agentconfig.AgentConfig, error)) (Config, error) {
 	raw, err := load()
 	if err != nil {
 		return Config{}, fmt.Errorf("%s: load agent config: %w", crewKind, err)
@@ -147,6 +184,13 @@ func loadConfig(crewKind, subAgent, modelEnv string, load func() (agentconfig.Ag
 			"(Phase 3.1 cutover per ADR-163; no in-memory fallback per feedback_no_stubs_real_wiring)", crewKind)
 	}
 
+	// The model id is env-only: there is no built-in default model name, so a
+	// binary whose model var is unset must refuse to start.
+	model, err := requiredModel(modelEnv)
+	if err != nil {
+		return Config{}, fmt.Errorf("%s: %w", crewKind, err)
+	}
+
 	cfg := Config{
 		CrewKind:        crewKind,
 		SessionAppName:  EnvOr("CHORA_SESSION_APP_NAME", ServiceName(crewKind)),
@@ -154,8 +198,8 @@ func loadConfig(crewKind, subAgent, modelEnv string, load func() (agentconfig.Ag
 		GatewayAudience: EnvOr("CHORA_GATEWAY_AUDIENCE", "https://gateway.chora.site"),
 		GatewayTenantID: gatewayTenantID,
 		GatewayGCID:     gatewayGCID,
-		Model:           EnvOr(modelEnv, sub.PrimaryModel),
-		FallbackModels:  sub.FallbackModels,
+		Model:           model,
+		FallbackModels:  fallbackModels(fallbackEnv),
 		PromptVersion:   sub.PromptVersion,
 		ChoraEnv:        EnvOr("CHORA_ENV", "dev"),
 	}
