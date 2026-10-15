@@ -78,13 +78,15 @@ The main configuration variables are:
 | `CHORA_GATEWAY_INSECURE` | Uses plaintext gRPC for local gateway access | unset |
 | `CHORA_GATEWAY_AUDIENCE` | Gateway token audience | `https://gateway.chora.site` |
 | `CHORA_SESSION_APP_NAME` | ADK session app name | service name |
-| `OE_EVALUATOR_MODEL` | Evaluator primary-model override | YAML value |
-| `OE_MODERATOR_MODEL` | Moderator primary-model override | YAML value |
+| `OE_EVALUATOR_MODEL` | Evaluator gateway logical model id | Required |
+| `OE_EVALUATOR_FALLBACK_MODELS` | Evaluator fallback chain (comma-separated) | unset (no fallback) |
+| `OE_MODERATOR_MODEL` | Moderator gateway logical model id | Required |
+| `OE_MODERATOR_FALLBACK_MODELS` | Moderator fallback chain (comma-separated) | unset (no fallback) |
 | `CHORA_ENV` | Environment label | `dev` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/gRPC trace endpoint | stdout |
 | `CHORA_SERVICE_VERSION` | OTLP `service.version` value | `dev` |
 
-The embedded agent configuration names `longcat-2.5-preview` (the deployment's text model, LongCat @ api.longcat.ai) for both the evaluator (HIGH tier) and the moderator (CHEAP tier) — the deployment serves one text route, so the ADR-172 §D2 tier split is carried by the tier label rather than by the model id.
+The embedded agent configuration declares each agent's tier (evaluator = HIGH, moderator = CHEAP) and prompt version, but no model name: both binaries read their REQUIRED `OE_EVALUATOR_MODEL` / `OE_MODERATOR_MODEL` env var as the gateway `logical_model_id`, and boot fails loud when either is unset. Each agent's fallback chain is the optional comma-separated `OE_EVALUATOR_FALLBACK_MODELS` / `OE_MODERATOR_FALLBACK_MODELS`; unset declares no fallback. The ADR-172 §D2 tier split is carried by the tier label rather than by the model id.
 
 Docker builds both binaries into one image and defaults to the evaluator:
 
