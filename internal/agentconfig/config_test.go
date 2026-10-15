@@ -1,13 +1,16 @@
 package agentconfig_test
 
-// Tests for the embedded per-agent model + prompt config (ADR-172 §D2/§D3).
+// Tests for the embedded per-agent tier + prompt config (ADR-172 §D2/§D3).
 //
-// The YAML is the single source of truth for the AGENT-DRIVEN tier ladder: the
-// agent sends primary_model as the gateway logical_model_id and fallback_models
-// as InvokeRequest.fallback_logical_model_ids, and the gateway HONOURS the
-// declared chain rather than applying a per-tier ladder of its own. A silent
-// drift in these declared values therefore re-routes real grading traffic to a
-// different model, so the tests assert the declared values verbatim.
+// The YAML is the single source of truth for the AGENT-DRIVEN tier ladder and
+// the prompt version: the agent sends its env-provided model id as the gateway
+// logical_model_id and the env-declared fallback chain as
+// InvokeRequest.fallback_logical_model_ids, and the gateway HONOURS the declared
+// chain rather than applying a per-tier ladder of its own. The model id itself
+// is env-only (a blank REQUIRED model var fails the boot), so what these tests
+// pin is that the YAML declares no model name, the tiers, and the prompt
+// version — a silent drift in the tier split would re-price real grading
+// traffic.
 
 import (
 	"reflect"
@@ -19,7 +22,7 @@ import (
 
 // The evaluator is the grader of record: a learner's grade rides on its output
 // (and on the assess_summary narrative), so it runs the HIGH text tier.
-func TestOEEvaluator_HighTierLadder(t *testing.T) {
+func TestOEEvaluator_HighTier(t *testing.T) {
 	cfg, err := agentconfig.OEEvaluator()
 	if err != nil {
 		t.Fatalf("OEEvaluator: %v", err)
@@ -36,11 +39,12 @@ func TestOEEvaluator_HighTierLadder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sub(evaluator): %v", err)
 	}
+	// The model id is env-only: the YAML declares tier + prompt version and
+	// NO primary/fallback — boot fails loud when the REQUIRED
+	// OE_EVALUATOR_MODEL is unset.
 	want := agentconfig.SubAgentConfig{
-		Tier:           "high",
-		PrimaryModel:   "longcat-2.5-preview",
-		FallbackModels: []string{"longcat-2.5-preview"},
-		PromptVersion:  "v1",
+		Tier:          "high",
+		PromptVersion: "v1",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("evaluator sub-agent config drifted from oe_evaluator.yaml\n got: %+v\nwant: %+v", got, want)
@@ -49,7 +53,7 @@ func TestOEEvaluator_HighTierLadder(t *testing.T) {
 
 // The moderator is a tool-free accept/reject judge over one structured input,
 // so it runs the CHEAP text tier (mirrors qgen_critic).
-func TestOEModerator_CheapTierLadder(t *testing.T) {
+func TestOEModerator_CheapTier(t *testing.T) {
 	cfg, err := agentconfig.OEModerator()
 	if err != nil {
 		t.Fatalf("OEModerator: %v", err)
@@ -66,13 +70,9 @@ func TestOEModerator_CheapTierLadder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sub(moderator): %v", err)
 	}
-	// Both tiers name the deployment's single text route; the tier label — not
-	// the model id — is what carries the ADR-172 §D2 split.
 	want := agentconfig.SubAgentConfig{
-		Tier:           "cheap",
-		PrimaryModel:   "longcat-2.5-preview",
-		FallbackModels: []string{"longcat-2.5-preview"},
-		PromptVersion:  "v1",
+		Tier:          "cheap",
+		PromptVersion: "v1",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("moderator sub-agent config drifted from oe_moderator.yaml\n got: %+v\nwant: %+v", got, want)
@@ -80,10 +80,9 @@ func TestOEModerator_CheapTierLadder(t *testing.T) {
 }
 
 // The two agents declare DIFFERENT tiers on purpose (ADR-172 §D2): the grader
-// of record is expensive, the judge is cheap. The deployment serves one text
-// route, so both tiers name it and the TIER LABEL is what carries the split —
-// the model assertion below is that neither declares a stale id.
-func TestOEAgents_TiersSplitAndBothNameTheDeploymentRoute(t *testing.T) {
+// of record is expensive, the judge is cheap. The tier LABEL is what carries
+// the split — never a model id in the YAML.
+func TestOEAgents_TiersSplit(t *testing.T) {
 	ev, err := agentconfig.OEEvaluator()
 	if err != nil {
 		t.Fatalf("OEEvaluator: %v", err)
@@ -104,15 +103,8 @@ func TestOEAgents_TiersSplitAndBothNameTheDeploymentRoute(t *testing.T) {
 		t.Errorf("evaluator and moderator share tier %q; ADR-172 §D2 puts the grader on high and the judge on cheap",
 			evSub.Tier)
 	}
-	const textRoute = "longcat-2.5-preview"
-	for _, tc := range []struct {
-		name string
-		sc   agentconfig.SubAgentConfig
-	}{{"evaluator", evSub}, {"moderator", modSub}} {
-		if tc.sc.PrimaryModel != textRoute {
-			t.Errorf("%s primary_model = %q, want the deployment's text route %q",
-				tc.name, tc.sc.PrimaryModel, textRoute)
-		}
+	if evSub.Tier != "high" || modSub.Tier != "cheap" {
+		t.Errorf("tiers = %q/%q, want high/cheap", evSub.Tier, modSub.Tier)
 	}
 }
 
