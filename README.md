@@ -76,16 +76,25 @@ chora.ai_kernel.agent_dispatch.<role>_completed.v1
 where `<role>` is `oe_evaluate` or `oe_moderate`. The canonical event envelope travels in the
 NATS headers rather than the body.
 
-### The health endpoint does not bind — this is the agent framework
+### The health endpoint does not bind — a stale framework pin
 
 Both binaries document `AGENT_HEALTH_PORT` (default `8080`), and `chora-adk-common` logs a
 `health_addr` at boot. **Nothing answers on that port** — verified for both services in the
-running stack, from a sibling container. `chora-companion-diagnosis` and `chora-kg-explorer`
-are built the same way and behave identically, so this is the shared agent framework rather
-than a fault in any one repository.
+running stack, from a sibling container.
 
-Do not gate readiness on `curl http://…:8080/healthz` for these agents. The broker's consumer
-list is the reliable check — see [Verify it works](#verify-it-works).
+The cause is the framework version pinned in `go.mod`:
+
+```text
+chora-adk-common v0.0.0-20261005110720-56af53fbecf8   ← this repo, no listener
+chora-adk-common v0.0.0-20261018001513-336709b355a0   ← chora-qgen, binds correctly
+```
+
+The October 18 pseudo-version fixed the bind. `chora-companion-diagnosis` and
+`chora-kg-explorer` carry the same stale pin and fail identically; there is nothing to fix in
+this repository's code — bump the pin.
+
+Do not gate readiness on `curl http://…:8080/healthz` for these agents until then. The broker's
+consumer list is the reliable check — see [Verify it works](#verify-it-works).
 
 ## Prerequisites
 
