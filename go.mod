@@ -12,9 +12,8 @@ require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.18.2 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	github.com/apollo-chora/chora-adk-common v0.0.0-20261005110720-56af53fbecf8
+	github.com/apollo-chora/chora-adk-common v0.0.0-20261018001513-336709b355a0
 	github.com/apollo-chora/chora-common v0.0.0-20261005042719-5373c91ce52b // indirect
-	github.com/apollo-chora/chora-contracts/gen/go v0.0.0-20261005030823-832afca4af5b // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
